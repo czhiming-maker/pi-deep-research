@@ -1,6 +1,6 @@
 {
   "name": "pi-deep-research",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Deep research skill for pi — adaptive planning, multi-hop reasoning, confidence-driven iteration with web search tools",
   "keywords": [
     "pi-package",
@@ -34,9 +34,5 @@
     "extensions": [
       "./extension.ts"
     ]
-  },
-  "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@sinclair/typebox": "*"
   }
 }
