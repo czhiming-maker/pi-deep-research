@@ -1,3 +1,7 @@
+---
+description: "Deep web research skill for pi — structured search, reflection, and analysis with adaptive planning and confidence-driven iteration."
+---
+
 # pi-deep-research
 
 **Deep research skill for [pi](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) — structured search, reflection, and analysis.**
@@ -5,6 +9,56 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
 Instead of shallow search-and-summarize, it enforces structured methodology: plan → search → reflect → iterate → report. A code-enforced checkpoint gate prevents the agent from rushing to conclusions before gathering enough evidence.
+
+## Install
+
+```bash
+pi install npm:pi-deep-research
+```
+
+Then set a search API key (at least one):
+
+```bash
+# Tavily (recommended, free: 1000 req/month)
+export TAVILY_API_KEY="tvly-..."
+
+# Brave Search (alternative, free: 2000 req/month)
+export BRAVE_API_KEY="BSA..."
+```
+
+## Usage
+
+### Slash Command
+
+```
+/research [depth] [topic]
+```
+
+Depth levels:
+| Depth | Searches | Sources | Confidence | Time |
+|-------|:--------:|:-------:|:----------:|:----:|
+| `quick` | 1-3 | 3-5 | 60% | ~2 min |
+| `standard` | 3-6 | 5-10 | 75% | ~5 min |
+| `deep` | 5-10 | 10-15 | 85% | ~10 min |
+| `exhaustive` | 10-20 | 15-30 | 95% | ~20 min |
+
+Examples:
+```
+/research quick what is MCP protocol
+/research deep competitive analysis of AI coding assistants
+/research exhaustive quantum computing applications in drug discovery
+```
+
+### Natural Language
+
+The skill also activates when you ask the agent to research, investigate, or survey a topic:
+
+```
+Investigate the current state of AI agent frameworks
+Investigate the current state of WebAssembly adoption
+```
+
+## Quick Start
 
 ```
 /research deep AI agent frameworks comparison 2026
@@ -69,54 +123,6 @@ LLMs doing "research" typically search once, skim snippets, and produce a surfac
 3. **Multi-hop reasoning** — Entity Expansion, Temporal Progression, Conceptual Deepening, and Causal Chain patterns with concrete examples
 4. **Analytical writing** — anti-patterns ("Source A says X. Source B says Y." ❌) vs analytical style ("Evidence converges on X because..." ✅)
 5. **Human-in-the-Loop** — research plan must be approved before execution begins
-
-## Install
-
-```bash
-pi install https://github.com/czhiming-maker/pi-deep-research
-```
-
-Then set a search API key (at least one):
-
-```bash
-# Tavily (recommended, free: 1000 req/month)
-export TAVILY_API_KEY="tvly-..."
-
-# Brave Search (alternative, free: 2000 req/month)
-export BRAVE_API_KEY="BSA..."
-```
-
-## Usage
-
-### Slash Command
-
-```
-/research [depth] [topic]
-```
-
-Depth levels:
-| Depth | Searches | Sources | Confidence | Time |
-|-------|:--------:|:-------:|:----------:|:----:|
-| `quick` | 1-3 | 3-5 | 60% | ~2 min |
-| `standard` | 3-6 | 5-10 | 75% | ~5 min |
-| `deep` | 5-10 | 10-15 | 85% | ~10 min |
-| `exhaustive` | 10-20 | 15-30 | 95% | ~20 min |
-
-Examples:
-```
-/research quick what is MCP protocol
-/research deep competitive analysis of AI coding assistants
-/research exhaustive quantum computing applications in drug discovery
-```
-
-### Natural Language
-
-The skill also activates when you ask the agent to research, investigate, or survey a topic:
-
-```
-Investigate the current state of AI agent frameworks
-Investigate the current state of WebAssembly adoption
-```
 
 ## How It Works
 

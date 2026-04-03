@@ -1,5 +1,5 @@
 ---
-name: deep-research
+name: pi-deep-research
 description: >
   Deep web research with adaptive planning, multi-hop reasoning, and confidence-driven iteration.
   For research questions beyond knowledge cutoff, competitive analysis, technology surveys, literature reviews.
