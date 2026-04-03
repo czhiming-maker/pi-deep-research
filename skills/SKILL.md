@@ -41,8 +41,8 @@ Core principles:
 ## Workflow
 
 **Before doing anything else**, read both reference files — don't skip this, don't rely on memory:
-1. Read `./references/config.md` — depth parameters, credibility tiers, confidence scoring formula
-2. Read `./references/report-template.md` — output format specification
+1. Read `../references/config.md` — depth parameters, credibility tiers, confidence scoring formula
+2. Read `../references/report-template.md` — output format specification
 
 Only proceed after reading both files.
 
@@ -181,7 +181,7 @@ The search-checkpoint loop works like this:
 
 **Only enter this phase after receiving a 🟢 PROCEED verdict from `research_checkpoint`.**
 
-**The report MUST be a Markdown file.** Follow the structure in `./references/report-template.md` exactly:
+**The report MUST be a Markdown file.** Follow the structure in `../references/report-template.md` exactly:
 1. Generate a complete `.md` file with ALL required sections (see depth table in report-template.md)
 2. Save to `research_[topic]_[YYYYMMDD].md` in the current working directory
 3. The report is a RESEARCH REPORT ONLY — do NOT implement findings, write code, or make system changes
@@ -225,7 +225,7 @@ The search-checkpoint loop works like this:
 
 ## Research Depth Reference
 
-Depth parameters, credibility tiers, and confidence scoring formula are all in `./references/config.md`. Read it at the start of every research task — don't rely on the summary below.
+Depth parameters, credibility tiers, and confidence scoring formula are all in `../references/config.md`. Read it at the start of every research task — don't rely on the summary below.
 
 Quick summary:
 - **Quick**: 1-3 searches, 3-5 sources, confidence threshold 60%

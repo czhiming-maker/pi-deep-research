@@ -1,6 +1,6 @@
 {
   "name": "pi-deep-research",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Deep research skill for pi — adaptive planning, multi-hop reasoning, confidence-driven iteration with web search tools",
   "keywords": [
     "pi-package",
@@ -16,7 +16,7 @@
   },
   "homepage": "https://github.com/czhiming-maker/pi-deep-research#readme",
   "files": [
-    "SKILL.md",
+    "skills/SKILL.md",
     "extension.ts",
     "prompts/",
     "references/",
@@ -26,7 +26,7 @@
   ],
   "pi": {
     "skills": [
-      "./"
+      "./skills"
     ],
     "prompts": [
       "./prompts"
