@@ -29,20 +29,6 @@ export BRAVE_API_KEY="BSA..."
 **Provider priority chain:** Firecrawl (local) → SearXNG (local) → Tavily (cloud) → Brave (cloud).
 The extension tries local providers first; if none are available, it falls back to cloud APIs.
 
-### 🔒 Fully Isolated Local Setup
-
-See [`SETUP_LOCAL.md`](SETUP_LOCAL.md) for instructions on running the entire research
-pipeline locally with no external API dependencies using Docker + Firecrawl.
-
-```bash
-# Start Firecrawl (from ~/repo/firecrawl/)
-docker compose up -d
-
-# Run pi with local-only search
-export FIRECRAWL_BASE_URL=http://localhost:3002
-pi /research deep "some topic"
-```
-
 ## Usage
 
 ### Slash Command
