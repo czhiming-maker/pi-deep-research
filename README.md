@@ -212,7 +212,7 @@ Sections include:
 
 | Provider | Env Variable | Type | Free Tier |
 |----------|-------------|------|-----------|
-| [Firecrawl](https://github.com/firecrawl/firecrawl) | `FIRECRAWL_BASE_URL` | 🏠 Local | Unrestricted (self-hosted) |
+| [Firecrawl](https://github.com/firecrawl/firecrawl) | `FIRECRAWL_BASE_URL` (+ `FIRECRAWL_BASIC_AUTH` for HTTP Basic Auth) | 🏠 Local / ☁️ Remote | Unrestricted (self-hosted) |
 | [SearXNG](https://docs.searxng.org/) | `SEARXNG_BASE_URL` | 🏠 Local | Unrestricted (self-hosted) |
 | [Tavily](https://tavily.com) | `TAVILY_API_KEY` | ☁️ Cloud | 1000 req/month |
 | [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` | ☁️ Cloud | 2000 req/month |

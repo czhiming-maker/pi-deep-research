@@ -40,10 +40,20 @@ interface ExtractResult {
 
 // ─── Configuration ───
 
-const FIRECRAWL_BASE_URL = process.env.FIRECRAWL_BASE_URL;   // e.g. http://localhost:3002
-const SEARXNG_BASE_URL   = process.env.SEARXNG_BASE_URL;     // e.g. http://localhost:4000
-const TAVILY_API_KEY     = process.env.TAVILY_API_KEY;
-const BRAVE_API_KEY      = process.env.BRAVE_API_KEY;
+const FIRECRAWL_BASE_URL   = process.env.FIRECRAWL_BASE_URL;     // e.g. http://localhost:3002
+const FIRECRAWL_BASIC_AUTH = process.env.FIRECRAWL_BASIC_AUTH;   // "user:password" when Firecrawl is behind HTTP Basic Auth
+const SEARXNG_BASE_URL     = process.env.SEARXNG_BASE_URL;       // e.g. http://localhost:4000
+const TAVILY_API_KEY       = process.env.TAVILY_API_KEY;
+const BRAVE_API_KEY        = process.env.BRAVE_API_KEY;
+
+/** Build headers for Firecrawl API calls, optionally with HTTP Basic auth. */
+function firecrawlHeaders(): Record<string, string> {
+	const headers: Record<string, string> = { "Content-Type": "application/json" };
+	if (FIRECRAWL_BASIC_AUTH) {
+		headers["Authorization"] = "Basic " + Buffer.from(FIRECRAWL_BASIC_AUTH).toString("base64");
+	}
+	return headers;
+}
 
 // ─── Search Providers ───
 
@@ -51,7 +61,7 @@ async function searchFirecrawl(query: string, maxResults: number): Promise<Searc
 	const baseUrl = FIRECRAWL_BASE_URL!.replace(/\/+$/, "");
 	const resp = await fetch(`${baseUrl}/v1/search`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: firecrawlHeaders(),
 		body: JSON.stringify({
 			query,
 			limit: maxResults,
@@ -243,7 +253,7 @@ async function extractWithFirecrawl(url: string): Promise<ExtractResult> {
 	const baseUrl = FIRECRAWL_BASE_URL!.replace(/\/+$/, "");
 	const resp = await fetch(`${baseUrl}/v1/scrape`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: firecrawlHeaders(),
 		body: JSON.stringify({
 			url,
 			formats: ["markdown"],
@@ -374,6 +384,7 @@ export default function (pi: ExtensionAPI) {
 			"Returns ranked results with title, URL, snippet, and relevance score.",
 			"Attempts local providers first (Firecrawl → SearXNG), then falls back to Tavily → Brave.",
 			"Set FIRECRAWL_BASE_URL or SEARXNG_BASE_URL for fully local operation.",
+			"If Firecrawl is behind HTTP Basic Auth (a reverse proxy), set FIRECRAWL_BASIC_AUTH=user:pass.",
 		].join(" "),
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query" })),
@@ -458,6 +469,7 @@ export default function (pi: ExtensionAPI) {
 			"Extract the main text content from a web page URL.",
 			"Strips HTML, scripts, navigation, and returns clean text.",
 			"Uses Firecrawl's Playwright-based scraper when FIRECRAWL_BASE_URL is set.",
+			"If Firecrawl is behind HTTP Basic Auth (a reverse proxy), set FIRECRAWL_BASIC_AUTH=user:pass.",
 			"Use after web_search to read full content of promising results.",
 		].join(" "),
 		parameters: Type.Object({
