@@ -36,6 +36,7 @@ interface ExtractResult {
 	author?: string;
 	publishedDate?: string;
 	wordCount: number;
+	provider: string; // extractor that actually produced this — may differ from configured (fallback)
 }
 
 // ─── Configuration ───
@@ -53,6 +54,53 @@ function firecrawlHeaders(): Record<string, string> {
 		headers["Authorization"] = "Basic " + Buffer.from(FIRECRAWL_BASIC_AUTH).toString("base64");
 	}
 	return headers;
+}
+
+const MAX_WORDS = 8000;
+
+// ─── Helpers ───
+
+/** Truncate to MAX_WORDS, preserving the original text (incl. markdown/newlines) up to the cut. */
+function truncateToWords(content: string): { content: string; wordCount: number } {
+	const re = /\S+/g;
+	let count = 0;
+	let cutIdx = -1;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(content)) !== null) {
+		count++;
+		if (count === MAX_WORDS) cutIdx = m.index + m[0].length;
+	}
+	if (count <= MAX_WORDS) return { content, wordCount: count };
+	return { content: content.slice(0, cutIdx) + `\n\n[... truncated, total ${count} words]`, wordCount: count };
+}
+
+function hostMatches(host: string, domain: string): boolean {
+	const h = host.toLowerCase();
+	const d = domain.toLowerCase().replace(/^\.+/, "");
+	return h === d || h.endsWith("." + d);
+}
+
+/** Filter results by include/exclude domains client-side, so every provider honors the filter uniformly. */
+function applyDomainFilter(results: SearchResult[], include?: string[], exclude?: string[]): SearchResult[] {
+	if (!include?.length && !exclude?.length) return results;
+	return results.filter((r) => {
+		let host: string | null = null;
+		try { host = new URL(r.url).hostname; } catch { /* unparseable URL */ }
+		if (include?.length && !(host && include.some((d) => hostMatches(host!, d)))) return false;
+		if (exclude?.length && host && exclude.some((d) => hostMatches(host!, d))) return false;
+		return true;
+	});
+}
+
+/** First non-empty metadata value across candidate keys (Firecrawl passes raw meta keys straight through). */
+function pickMeta(meta: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+	if (!meta) return undefined;
+	for (const k of keys) {
+		const v = meta[k];
+		if (typeof v === "string" && v.trim()) return v;
+		if (Array.isArray(v) && typeof v[0] === "string" && v[0].trim()) return v[0];
+	}
+	return undefined;
 }
 
 // ─── Search Providers ───
@@ -173,57 +221,66 @@ async function searchBrave(query: string, maxResults: number): Promise<SearchRes
 
 /**
  * Try providers in priority order: Firecrawl → SearXNG → Tavily → Brave.
- * Throws only if all providers fail.
+ *
+ * Fallthrough rules (air-gap-safe):
+ *   - A thrown error (provider unreachable / HTTP error / timeout) always falls
+ *     through to the next provider, local or cloud — so a Firecrawl *process*
+ *     outage is recovered by the cloud chain when keys are set.
+ *   - An empty-but-successful result falls through only to other LOCAL providers.
+ *     We do NOT phone the cloud for an empty local result: Firecrawl soft-fails a
+ *     backend outage as HTTP 200 + empty data, indistinguishable from a genuine
+ *     zero-hit, so cascading empties to cloud would leak real queries off-box and
+ *     defeat the air-gap. A persistent zero-source state is caught downstream by
+ *     research_checkpoint's minSources gate, not papered over here.
+ *
+ * Returns the last empty result once the chain is exhausted; raises only if every
+ * attempted provider threw, or none is configured.
  */
 async function doSearch(query: string, opts: { maxResults: number; searchDepth: string; includeDomains?: string[]; excludeDomains?: string[]; }): Promise<{ provider: string; results: SearchResult[] }> {
 	const maxResults = opts.maxResults;
 
-	// 1. Local Firecrawl
-	if (FIRECRAWL_BASE_URL) {
+	type Provider = { name: string; tier: "local" | "cloud"; run: () => Promise<SearchResult[]> };
+	const chain: Provider[] = [];
+	if (FIRECRAWL_BASE_URL) chain.push({ name: "firecrawl", tier: "local", run: () => searchFirecrawl(query, maxResults) });
+	if (SEARXNG_BASE_URL)   chain.push({ name: "searxng",   tier: "local", run: () => searchSearXNG(query, maxResults) });
+	if (TAVILY_API_KEY)     chain.push({ name: "tavily",    tier: "cloud", run: () => searchTavily(query, opts) });
+	if (BRAVE_API_KEY)      chain.push({ name: "brave",     tier: "cloud", run: () => searchBrave(query, maxResults) });
+
+	if (chain.length === 0) {
+		const suggestions = [
+			"  Firecrawl: FIRECRAWL_BASE_URL=http://localhost:3002 (see ~/repo/firecrawl/)",
+			"  SearXNG:   SEARXNG_BASE_URL=http://localhost:4000",
+			"  Tavily:    TAVILY_API_KEY (https://tavily.com, free: 1000 req/month)",
+			"  Brave:     BRAVE_API_KEY (https://brave.com/search/api/, free: 2000 req/month)",
+		];
+		throw new Error(
+			"No search provider available.\n" +
+			"Set at least one of these environment variables:\n" + suggestions.join("\n")
+		);
+	}
+
+	const failures: string[] = [];
+	let lastEmpty: { provider: string; results: SearchResult[] } | null = null;
+	let localAnswered = false; // a local provider returned successfully (even if empty)
+
+	for (const p of chain) {
+		// Air-gap guard: once any local provider has answered, don't cross into cloud on empties.
+		if (p.tier === "cloud" && localAnswered) break;
 		try {
-			const results = await searchFirecrawl(query, maxResults);
-			return { provider: "firecrawl", results };
+			const results = applyDomainFilter(await p.run(), opts.includeDomains, opts.excludeDomains);
+			if (p.tier === "local") localAnswered = true;
+			if (results.length > 0) return { provider: p.name, results };
+			lastEmpty = { provider: p.name, results }; // remember, keep trying within the allowed tier
 		} catch (e) {
-			console.warn(`Firecrawl search failed: ${e instanceof Error ? e.message : e}`);
+			const msg = e instanceof Error ? e.message : String(e);
+			failures.push(`${p.name}: ${msg}`);
+			console.warn(`${p.name} search failed: ${msg}`);
 		}
 	}
 
-	// 2. Local SearXNG
-	if (SEARXNG_BASE_URL) {
-		try {
-			const results = await searchSearXNG(query, maxResults);
-			return { provider: "searxng", results };
-		} catch (e) {
-			console.warn(`SearXNG search failed: ${e instanceof Error ? e.message : e}`);
-		}
-	}
-
-	// 3. Tavily (cloud)
-	if (TAVILY_API_KEY) {
-		try {
-			const results = await searchTavily(query, opts);
-			return { provider: "tavily", results };
-		} catch (e) {
-			console.warn(`Tavily search failed: ${e instanceof Error ? e.message : e}`);
-		}
-	}
-
-	// 4. Brave Search (cloud)
-	if (BRAVE_API_KEY) {
-		const results = await searchBrave(query, maxResults);
-		return { provider: "brave", results };
-	}
-
-	// No provider configured — show helpful message
-	const suggestions: string[] = [];
-	if (!FIRECRAWL_BASE_URL) suggestions.push("  Firecrawl: FIRECRAWL_BASE_URL=http://localhost:3002 (see ~/repo/firecrawl/)");
-	if (!SEARXNG_BASE_URL) suggestions.push("  SearXNG:   SEARXNG_BASE_URL=http://localhost:4000");
-	suggestions.push("  Tavily:    TAVILY_API_KEY (https://tavily.com, free: 1000 req/month)");
-	suggestions.push("  Brave:     BRAVE_API_KEY (https://brave.com/search/api/, free: 2000 req/month)");
-
+	if (lastEmpty) return lastEmpty; // best-effort: surface the empty rather than erroring
 	throw new Error(
-		"No search provider available.\n" +
-		"Set at least one of these environment variables:\n" + suggestions.join("\n")
+		`All ${failures.length} attempted search provider(s) failed:\n` + failures.map((f) => `  ${f}`).join("\n")
 	);
 }
 
@@ -267,39 +324,34 @@ async function extractWithFirecrawl(url: string): Promise<ExtractResult> {
 	}
 
 	const data = (await resp.json()) as {
-		success: boolean;
-		data: {
+		success?: boolean;
+		error?: string;
+		data?: {
 			title?: string;
 			url?: string;
 			markdown?: string;
-			metadata?: {
-				title?: string;
-				description?: string;
-				publishedTime?: string;
-				author?: string;
-				sourceURL?: string;
-			};
+			// Firecrawl normalizes some meta but passes most raw meta keys straight through,
+			// so author/date live under varying keys — read them via pickMeta, not fixed fields.
+			metadata?: { title?: string; sourceURL?: string; [key: string]: unknown };
 		};
 	};
+
+	if (data.success === false) throw new Error(`Firecrawl scrape unsuccessful: ${data.error ?? "unknown error"}`);
 
 	const doc = data.data;
 	if (!doc) throw new Error("Firecrawl returned empty document");
 
+	const rawContent = doc.markdown ?? "";
+	// A 200 with empty markdown (JS-heavy or blocked page) is not a usable extract — throw so the
+	// caller falls back to extractWithFetch rather than returning a hollow "successful" empty result.
+	if (!rawContent.trim()) throw new Error("Firecrawl returned no content (page may require JS or be blocked)");
+
 	const title = doc.metadata?.title ?? doc.title ?? "";
-	const author = doc.metadata?.author;
-	const publishedDate = doc.metadata?.publishedTime;
-	const content = doc.markdown ?? "";
+	const author = pickMeta(doc.metadata, ["author", "article:author", "dc.creator", "parsely-author"]);
+	const publishedDate = pickMeta(doc.metadata, ["publishedTime", "article:published_time", "date"]);
+	const { content, wordCount } = truncateToWords(rawContent);
 
-	const wordCount = content.split(/\s+/).filter(Boolean).length;
-
-	// Truncate to ~8000 words
-	let truncated = content;
-	if (wordCount > 8000) {
-		const words = content.split(/\s+/);
-		truncated = words.slice(0, 8000).join(" ") + "\n\n[... truncated, total " + wordCount + " words]";
-	}
-
-	return { title, url, content: truncated, author, publishedDate, wordCount };
+	return { title, url, content, author, publishedDate, wordCount, provider: "firecrawl" };
 }
 
 async function extractWithFetch(url: string): Promise<ExtractResult> {
@@ -321,7 +373,7 @@ async function extractWithFetch(url: string): Promise<ExtractResult> {
 	const title = titleMatch?.[1]?.replace(/&[^;]+;/g, " ").trim() ?? "";
 
 	// Remove script, style, nav, header, footer tags
-	let content = html
+	const content = html
 		.replace(/<script[\s\S]*?<\/script>/gi, "")
 		.replace(/<style[\s\S]*?<\/style>/gi, "")
 		.replace(/<nav[\s\S]*?<\/nav>/gi, "")
@@ -333,12 +385,7 @@ async function extractWithFetch(url: string): Promise<ExtractResult> {
 		.replace(/\s+/g, " ")
 		.trim();
 
-	// Truncate to ~8000 words
-	const words = content.split(/\s+/);
-	const wordCount = words.length;
-	if (words.length > 8000) {
-		content = words.slice(0, 8000).join(" ") + "\n\n[... truncated, total " + wordCount + " words]";
-	}
+	const { content: truncated, wordCount } = truncateToWords(content);
 
 	// Try to extract author from meta tags
 	const authorMatch = html.match(/<meta[^>]*name=["']author["'][^>]*content=["']([^"']+)["']/i);
@@ -348,28 +395,28 @@ async function extractWithFetch(url: string): Promise<ExtractResult> {
 	const dateMatch = html.match(/<meta[^>]*(?:property=["']article:published_time["']|name=["']date["'])[^>]*content=["']([^"']+)["']/i);
 	const publishedDate = dateMatch?.[1];
 
-	return { title, url, content, author, publishedDate, wordCount };
+	return { title, url, content: truncated, author, publishedDate, wordCount, provider: "fetch (basic)" };
 }
 
 // ─── Batch Search (parallel) ───
 
-async function batchSearch(queries: string[], opts: { maxResults: number; searchDepth: string }): Promise<{ provider: string; results: Record<string, SearchResult[]> }> {
-	const settled = await Promise.allSettled(
-		queries.map((q) => doSearch(q, { maxResults: opts.maxResults, searchDepth: opts.searchDepth }))
-	);
+async function batchSearch(queries: string[], opts: { maxResults: number; searchDepth: string; includeDomains?: string[]; excludeDomains?: string[]; }): Promise<{ providers: string[]; results: Record<string, SearchResult[]>; failures: Record<string, string> }> {
+	const settled = await Promise.allSettled(queries.map((q) => doSearch(q, opts)));
 
-	let provider = "unknown";
+	const providers = new Set<string>();
 	const results: Record<string, SearchResult[]> = {};
+	const failures: Record<string, string> = {};
 	for (let i = 0; i < queries.length; i++) {
 		const s = settled[i];
 		if (s.status === "fulfilled") {
-			provider = s.value.provider;
+			providers.add(s.value.provider);
 			results[queries[i]] = s.value.results;
 		} else {
 			results[queries[i]] = [];
+			failures[queries[i]] = s.reason instanceof Error ? s.reason.message : String(s.reason);
 		}
 	}
-	return { provider, results };
+	return { providers: [...providers], results, failures };
 }
 
 // ─── Extension Entry Point ───
@@ -417,12 +464,20 @@ export default function (pi: ExtensionAPI) {
 
 			// Batch mode
 			if (params.queries && params.queries.length > 0) {
-				const { provider, results } = await batchSearch(params.queries, { maxResults, searchDepth });
+				const { providers, results, failures } = await batchSearch(params.queries, {
+					maxResults,
+					searchDepth,
+					includeDomains: params.include_domains,
+					excludeDomains: params.exclude_domains,
+				});
 				const totalResults = Object.values(results).reduce((s, r) => s + r.length, 0);
-				let text = `Searched ${params.queries.length} queries via ${provider}, found ${totalResults} results:\n\n`;
+				const via = providers.length ? providers.join(", ") : "no provider";
+				let text = `Searched ${params.queries.length} queries via ${via}, found ${totalResults} results:\n\n`;
 
 				for (const [query, hits] of Object.entries(results)) {
-					text += `### "${query}" (${hits.length} results)\n\n`;
+					const failed = failures[query];
+					text += `### "${query}" (${hits.length} results)${failed ? " — ⚠️ all providers failed" : ""}\n\n`;
+					if (failed) text += `_${failed}_\n\n`;
 					for (let i = 0; i < hits.length; i++) {
 						const h = hits[i];
 						text += `${i + 1}. **${h.title}**\n   ${h.url}\n   ${h.snippet}\n`;
@@ -481,7 +536,7 @@ export default function (pi: ExtensionAPI) {
 				const result = await extractContent(params.url);
 				let text = `# ${result.title}\n\n`;
 				text += `**URL:** ${result.url}\n`;
-				text += `**Provider:** ${FIRECRAWL_BASE_URL ? "Firecrawl" : "fetch (basic)"}\n`;
+				text += `**Provider:** ${result.provider}\n`;
 				if (result.author) text += `**Author:** ${result.author}\n`;
 				if (result.publishedDate) text += `**Published:** ${result.publishedDate}\n`;
 				text += `**Word count:** ${result.wordCount}\n\n---\n\n`;
