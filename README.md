@@ -12,14 +12,35 @@ Instead of shallow search-and-summarize, it enforces structured methodology: pla
 pi install npm:pi-deep-research
 ```
 
-Then set a search API key (at least one):
+Then set a search API key or local provider endpoint:
 
 ```bash
-# Tavily (recommended, free: 1000 req/month)
-export TAVILY_API_KEY="tvly-..."
+# Option A: Local Firecrawl (recommended for isolated setup)
+export FIRECRAWL_BASE_URL=http://localhost:3002
 
-# Brave Search (alternative, free: 2000 req/month)
+# Option B: Local SearXNG (lightweight, search only)
+export SEARXNG_BASE_URL=http://localhost:4000
+
+# Option C: Cloud API (fallback when no local provider)
+export TAVILY_API_KEY="tvly-..."
 export BRAVE_API_KEY="BSA..."
+```
+
+**Provider priority chain:** Firecrawl (local) → SearXNG (local) → Tavily (cloud) → Brave (cloud).
+The extension tries local providers first; if none are available, it falls back to cloud APIs.
+
+### 🔒 Fully Isolated Local Setup
+
+See [`SETUP_LOCAL.md`](SETUP_LOCAL.md) for instructions on running the entire research
+pipeline locally with no external API dependencies using Docker + Firecrawl.
+
+```bash
+# Start Firecrawl (from ~/repo/firecrawl/)
+docker compose up -d
+
+# Run pi with local-only search
+export FIRECRAWL_BASE_URL=http://localhost:3002
+pi /research deep "some topic"
 ```
 
 ## Usage
@@ -189,12 +210,18 @@ Sections include:
 
 ### Search Providers
 
-| Provider | Env Variable | Free Tier |
-|----------|-------------|-----------|
-| [Tavily](https://tavily.com) (recommended) | `TAVILY_API_KEY` | 1000 req/month |
-| [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` | 2000 req/month |
+| Provider | Env Variable | Type | Free Tier |
+|----------|-------------|------|-----------|
+| [Firecrawl](https://github.com/firecrawl/firecrawl) | `FIRECRAWL_BASE_URL` | 🏠 Local | Unrestricted (self-hosted) |
+| [SearXNG](https://docs.searxng.org/) | `SEARXNG_BASE_URL` | 🏠 Local | Unrestricted (self-hosted) |
+| [Tavily](https://tavily.com) | `TAVILY_API_KEY` | ☁️ Cloud | 1000 req/month |
+| [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` | ☁️ Cloud | 2000 req/month |
 
-The extension tries Tavily first, falls back to Brave. If neither is set, it shows a helpful error.
+The extension probes providers in priority order: Firecrawl → SearXNG → Tavily → Brave.
+It gracefully skips unconfigured/unreachable providers and uses the first one that responds.
+
+For **web extraction** (`web_extract`), Firecrawl's `/v1/scrape` endpoint (Playwright-based)
+provides much higher quality results than the basic HTTP fetch fallback.
 
 ### Depth Defaults
 

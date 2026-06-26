@@ -1,7 +1,7 @@
 {
   "name": "pi-deep-research",
-  "version": "0.1.6",
-  "description": "Deep research skill for pi — structured search, reflection, and analysis.",
+  "version": "0.2.0-local",
+  "description": "Deep research skill for pi — local-first search with Firecrawl/SearXNG support, fully air-gappable.",
   "keywords": [
     "pi-package",
     "research",
@@ -9,7 +9,7 @@
     "deep-research"
   ],
   "license": "MIT",
-  "author": "agiroad",
+  "author": "agiroad (forked with local providers)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/czhiming-maker/pi-deep-research.git"

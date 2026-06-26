@@ -2,13 +2,18 @@
  * Deep Research Extension — web_search + web_extract tools
  *
  * Provides LLM-callable tools for internet search and content extraction.
- * Supports Tavily API (primary) and Brave Search API (fallback).
+ * Supports multiple providers with local-first priority:
  *
- * Configuration via environment variables:
- *   TAVILY_API_KEY   — Tavily API key (free tier: 1000 req/month)
- *   BRAVE_API_KEY    — Brave Search API key (free tier: 2000 req/month)
+ *   1. Firecrawl (local)     — FIRECRAWL_BASE_URL=http://localhost:3002
+ *   2. SearXNG (local)       — SEARXNG_BASE_URL=http://localhost:4000
+ *   3. Tavily (cloud)        — TAVILY_API_KEY=tvly-...
+ *   4. Brave Search (cloud)  — BRAVE_API_KEY=BSA...
  *
- * If neither key is set, falls back to a bash curl-based approach.
+ * Firecrawl is a full web scraping/crawling stack that can run completely
+ * offline via Docker Compose. SearXNG is a lightweight metasearch engine
+ * that also runs in a single container. When both local providers are active
+ * and the container is configured with no external network, this yields a
+ * fully isolated local research environment.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -33,11 +38,76 @@ interface ExtractResult {
 	wordCount: number;
 }
 
+// ─── Configuration ───
+
+const FIRECRAWL_BASE_URL = process.env.FIRECRAWL_BASE_URL;   // e.g. http://localhost:3002
+const SEARXNG_BASE_URL   = process.env.SEARXNG_BASE_URL;     // e.g. http://localhost:4000
+const TAVILY_API_KEY     = process.env.TAVILY_API_KEY;
+const BRAVE_API_KEY      = process.env.BRAVE_API_KEY;
+
 // ─── Search Providers ───
 
+async function searchFirecrawl(query: string, maxResults: number): Promise<SearchResult[]> {
+	const baseUrl = FIRECRAWL_BASE_URL!.replace(/\/+$/, "");
+	const resp = await fetch(`${baseUrl}/v1/search`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			query,
+			limit: maxResults,
+			scrapeOptions: { formats: [] }, // just search, don't scrape each result
+		}),
+		signal: AbortSignal.timeout(30000),
+	});
+
+	if (!resp.ok) {
+		const text = await resp.text();
+		throw new Error(`Firecrawl search error ${resp.status}: ${text}`);
+	}
+
+	const data = (await resp.json()) as {
+		success: boolean;
+		data: Array<{ title?: string; url?: string; description?: string }>;
+	};
+
+	return (data.data ?? []).slice(0, maxResults).map((d) => ({
+		title: d.title ?? "",
+		url: d.url ?? "",
+		snippet: d.description ?? "",
+	}));
+}
+
+async function searchSearXNG(query: string, maxResults: number): Promise<SearchResult[]> {
+	const baseUrl = SEARXNG_BASE_URL!.replace(/\/+$/, "");
+	const params = new URLSearchParams({
+		q: query,
+		format: "json",
+		language: "en",
+		categories: "general",
+	});
+	const resp = await fetch(`${baseUrl}/search?${params}`, {
+		signal: AbortSignal.timeout(15000),
+	});
+
+	if (!resp.ok) {
+		const text = await resp.text();
+		throw new Error(`SearXNG search error ${resp.status}: ${text}`);
+	}
+
+	const data = (await resp.json()) as {
+		results: Array<{ title: string; url: string; content: string; publishedDate?: string }>;
+	};
+
+	return (data.results ?? []).slice(0, maxResults).map((r) => ({
+		title: r.title ?? "",
+		url: r.url ?? "",
+		snippet: r.content ?? "",
+		publishedDate: r.publishedDate,
+	}));
+}
+
 async function searchTavily(query: string, opts: { maxResults: number; searchDepth: string; includeDomains?: string[]; excludeDomains?: string[]; }): Promise<SearchResult[]> {
-	const apiKey = process.env.TAVILY_API_KEY;
-	if (!apiKey) throw new Error("TAVILY_API_KEY not set");
+	if (!TAVILY_API_KEY) throw new Error("TAVILY_API_KEY not set");
 
 	const body: Record<string, unknown> = {
 		query,
@@ -50,7 +120,7 @@ async function searchTavily(query: string, opts: { maxResults: number; searchDep
 
 	const resp = await fetch("https://api.tavily.com/search", {
 		method: "POST",
-		headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+		headers: { "Content-Type": "application/json", Authorization: `Bearer ${TAVILY_API_KEY}` },
 		body: JSON.stringify(body),
 	});
 
@@ -69,13 +139,12 @@ async function searchTavily(query: string, opts: { maxResults: number; searchDep
 	}));
 }
 
-async function searchBrave(query: string, opts: { maxResults: number }): Promise<SearchResult[]> {
-	const apiKey = process.env.BRAVE_API_KEY;
-	if (!apiKey) throw new Error("BRAVE_API_KEY not set");
+async function searchBrave(query: string, maxResults: number): Promise<SearchResult[]> {
+	if (!BRAVE_API_KEY) throw new Error("BRAVE_API_KEY not set");
 
-	const params = new URLSearchParams({ q: query, count: String(opts.maxResults) });
+	const params = new URLSearchParams({ q: query, count: String(maxResults) });
 	const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
-		headers: { Accept: "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": apiKey },
+		headers: { Accept: "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": BRAVE_API_KEY },
 	});
 
 	if (!resp.ok) {
@@ -92,30 +161,138 @@ async function searchBrave(query: string, opts: { maxResults: number }): Promise
 	}));
 }
 
+/**
+ * Try providers in priority order: Firecrawl → SearXNG → Tavily → Brave.
+ * Throws only if all providers fail.
+ */
 async function doSearch(query: string, opts: { maxResults: number; searchDepth: string; includeDomains?: string[]; excludeDomains?: string[]; }): Promise<{ provider: string; results: SearchResult[] }> {
-	// Try Tavily first, then Brave
-	if (process.env.TAVILY_API_KEY) {
+	const maxResults = opts.maxResults;
+
+	// 1. Local Firecrawl
+	if (FIRECRAWL_BASE_URL) {
+		try {
+			const results = await searchFirecrawl(query, maxResults);
+			return { provider: "firecrawl", results };
+		} catch (e) {
+			console.warn(`Firecrawl search failed: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+
+	// 2. Local SearXNG
+	if (SEARXNG_BASE_URL) {
+		try {
+			const results = await searchSearXNG(query, maxResults);
+			return { provider: "searxng", results };
+		} catch (e) {
+			console.warn(`SearXNG search failed: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+
+	// 3. Tavily (cloud)
+	if (TAVILY_API_KEY) {
 		try {
 			const results = await searchTavily(query, opts);
 			return { provider: "tavily", results };
 		} catch (e) {
-			// Fall through to Brave
+			console.warn(`Tavily search failed: ${e instanceof Error ? e.message : e}`);
 		}
 	}
-	if (process.env.BRAVE_API_KEY) {
-		const results = await searchBrave(query, { maxResults: opts.maxResults });
+
+	// 4. Brave Search (cloud)
+	if (BRAVE_API_KEY) {
+		const results = await searchBrave(query, maxResults);
 		return { provider: "brave", results };
 	}
+
+	// No provider configured — show helpful message
+	const suggestions: string[] = [];
+	if (!FIRECRAWL_BASE_URL) suggestions.push("  Firecrawl: FIRECRAWL_BASE_URL=http://localhost:3002 (see ~/repo/firecrawl/)");
+	if (!SEARXNG_BASE_URL) suggestions.push("  SearXNG:   SEARXNG_BASE_URL=http://localhost:4000");
+	suggestions.push("  Tavily:    TAVILY_API_KEY (https://tavily.com, free: 1000 req/month)");
+	suggestions.push("  Brave:     BRAVE_API_KEY (https://brave.com/search/api/, free: 2000 req/month)");
+
 	throw new Error(
-		"No search API configured. Set TAVILY_API_KEY or BRAVE_API_KEY environment variable.\n" +
-		"  Tavily: https://tavily.com (free: 1000 req/month)\n" +
-		"  Brave:  https://brave.com/search/api/ (free: 2000 req/month)"
+		"No search provider available.\n" +
+		"Set at least one of these environment variables:\n" + suggestions.join("\n")
 	);
 }
 
 // ─── Content Extraction ───
 
+/**
+ * Extract content from a URL.
+ * If Firecrawl is available, delegates to its /v1/scrape endpoint
+ * which uses Playwright for proper JS rendering and Trafilatura/Markdown
+ * extraction. Falls back to a basic fetch + regex strip.
+ */
 async function extractContent(url: string): Promise<ExtractResult> {
+	// Try Firecrawl scrape first (best quality, JS-rendered)
+	if (FIRECRAWL_BASE_URL) {
+		try {
+			return await extractWithFirecrawl(url);
+		} catch (e) {
+			console.warn(`Firecrawl extract failed: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+
+	// Fallback: basic fetch + regex stripping
+	return extractWithFetch(url);
+}
+
+async function extractWithFirecrawl(url: string): Promise<ExtractResult> {
+	const baseUrl = FIRECRAWL_BASE_URL!.replace(/\/+$/, "");
+	const resp = await fetch(`${baseUrl}/v1/scrape`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			url,
+			formats: ["markdown"],
+		}),
+		signal: AbortSignal.timeout(60000),
+	});
+
+	if (!resp.ok) {
+		const text = await resp.text();
+		throw new Error(`Firecrawl scrape error ${resp.status}: ${text}`);
+	}
+
+	const data = (await resp.json()) as {
+		success: boolean;
+		data: {
+			title?: string;
+			url?: string;
+			markdown?: string;
+			metadata?: {
+				title?: string;
+				description?: string;
+				publishedTime?: string;
+				author?: string;
+				sourceURL?: string;
+			};
+		};
+	};
+
+	const doc = data.data;
+	if (!doc) throw new Error("Firecrawl returned empty document");
+
+	const title = doc.metadata?.title ?? doc.title ?? "";
+	const author = doc.metadata?.author;
+	const publishedDate = doc.metadata?.publishedTime;
+	const content = doc.markdown ?? "";
+
+	const wordCount = content.split(/\s+/).filter(Boolean).length;
+
+	// Truncate to ~8000 words
+	let truncated = content;
+	if (wordCount > 8000) {
+		const words = content.split(/\s+/);
+		truncated = words.slice(0, 8000).join(" ") + "\n\n[... truncated, total " + wordCount + " words]";
+	}
+
+	return { title, url, content: truncated, author, publishedDate, wordCount };
+}
+
+async function extractWithFetch(url: string): Promise<ExtractResult> {
 	const resp = await fetch(url, {
 		headers: {
 			"User-Agent": "Mozilla/5.0 (compatible; PiDeepResearch/1.0)",
@@ -130,7 +307,6 @@ async function extractContent(url: string): Promise<ExtractResult> {
 	const html = await resp.text();
 
 	// Simple content extraction — strip HTML tags, extract title and main content
-	// A production version would use @mozilla/readability or similar
 	const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/is);
 	const title = titleMatch?.[1]?.replace(/&[^;]+;/g, " ").trim() ?? "";
 
@@ -147,7 +323,7 @@ async function extractContent(url: string): Promise<ExtractResult> {
 		.replace(/\s+/g, " ")
 		.trim();
 
-	// Truncate to ~8000 words to avoid overwhelming the context
+	// Truncate to ~8000 words
 	const words = content.split(/\s+/);
 	const wordCount = words.length;
 	if (words.length > 8000) {
@@ -196,7 +372,8 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Search the web for information. Supports single query or batch queries (parallel).",
 			"Returns ranked results with title, URL, snippet, and relevance score.",
-			"Requires TAVILY_API_KEY or BRAVE_API_KEY environment variable.",
+			"Attempts local providers first (Firecrawl → SearXNG), then falls back to Tavily → Brave.",
+			"Set FIRECRAWL_BASE_URL or SEARXNG_BASE_URL for fully local operation.",
 		].join(" "),
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query" })),
@@ -280,6 +457,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Extract the main text content from a web page URL.",
 			"Strips HTML, scripts, navigation, and returns clean text.",
+			"Uses Firecrawl's Playwright-based scraper when FIRECRAWL_BASE_URL is set.",
 			"Use after web_search to read full content of promising results.",
 		].join(" "),
 		parameters: Type.Object({
@@ -291,6 +469,7 @@ export default function (pi: ExtensionAPI) {
 				const result = await extractContent(params.url);
 				let text = `# ${result.title}\n\n`;
 				text += `**URL:** ${result.url}\n`;
+				text += `**Provider:** ${FIRECRAWL_BASE_URL ? "Firecrawl" : "fetch (basic)"}\n`;
 				if (result.author) text += `**Author:** ${result.author}\n`;
 				if (result.publishedDate) text += `**Published:** ${result.publishedDate}\n`;
 				text += `**Word count:** ${result.wordCount}\n\n---\n\n`;
