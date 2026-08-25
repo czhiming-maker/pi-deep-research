@@ -4,6 +4,11 @@ description: "Changelog for pi-deep-research skill"
 
 # Changelog
 
+## [0.3.1] - 2026-08-25
+
+### Added
+- Gallery preview assets on [pi.dev/packages](https://pi.dev/packages/pi-deep-research): card image (`docs/card.png`) plus an 8s demo video (`docs/preview.mp4`, autoplays on hover in the package list).
+
 ## [0.3.0] - 2026-08-25
 
 Web search is rebuilt as a **hot-pluggable provider chain**: native support stays at Tavily and Brave; any other engine — including local ones like SearXNG or self-hosted Firecrawl — can be added by dropping a `.ts` plugin. Zero-config behavior is unchanged. Local-first direction from #4 by @fank, whose providers live on as example plugins.
