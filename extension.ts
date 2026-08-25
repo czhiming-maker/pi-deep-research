@@ -1,194 +1,39 @@
 /**
- * Deep Research Extension — web_search + web_extract tools
+ * Deep Research Extension — web_search + web_extract + research_checkpoint tools
  *
- * Provides LLM-callable tools for internet search and content extraction.
- * Supports Tavily API (primary) and Brave Search API (fallback).
- *
- * Configuration via environment variables:
- *   TAVILY_API_KEY   — Tavily API key (free tier: 1000 req/month)
- *   BRAVE_API_KEY    — Brave Search API key (free tier: 2000 req/month)
- *
- * If neither key is set, falls back to a bash curl-based approach.
+ * Search and extraction run a provider chain: the SEARCH_PROVIDERS env var,
+ * or ~/.pi/agent/pi-deep-research/config.json {"providers": [...]}, or the
+ * default tavily,brave. Additional providers are hot-pluggable: drop a .ts
+ * file exporting a SearchProvider into ~/.pi/agent/pi-deep-research/providers/
+ * and /reload. See README → Custom Search Providers.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createJiti } from "jiti";
 import { Type } from "@sinclair/typebox";
+import { chainBatchSearch, chainExtract, chainSearch, type ChainSearchOptions } from "./src/chain.ts";
+import { providersConfigPath, readProviderOrder, resolveChain } from "./src/config.ts";
+import { loadPlugins, providersDir } from "./src/loader.ts";
+import { createBraveProvider, createTavilyProvider } from "./src/native/index.ts";
 
-// ─── Types ───
-
-interface SearchResult {
-	title: string;
-	url: string;
-	snippet: string;
-	score?: number;
-	publishedDate?: string;
-}
-
-interface ExtractResult {
-	title: string;
-	url: string;
-	content: string;
-	author?: string;
-	publishedDate?: string;
-	wordCount: number;
-}
-
-// ─── Search Providers ───
-
-async function searchTavily(query: string, opts: { maxResults: number; searchDepth: string; includeDomains?: string[]; excludeDomains?: string[]; }): Promise<SearchResult[]> {
-	const apiKey = process.env.TAVILY_API_KEY;
-	if (!apiKey) throw new Error("TAVILY_API_KEY not set");
-
-	const body: Record<string, unknown> = {
-		query,
-		max_results: opts.maxResults,
-		search_depth: opts.searchDepth,
-		include_answer: false,
-	};
-	if (opts.includeDomains?.length) body.include_domains = opts.includeDomains;
-	if (opts.excludeDomains?.length) body.exclude_domains = opts.excludeDomains;
-
-	const resp = await fetch("https://api.tavily.com/search", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-		body: JSON.stringify(body),
-	});
-
-	if (!resp.ok) {
-		const text = await resp.text();
-		throw new Error(`Tavily API error ${resp.status}: ${text}`);
-	}
-
-	const data = (await resp.json()) as { results: Array<{ title: string; url: string; content: string; score: number; published_date?: string }> };
-	return data.results.map((r) => ({
-		title: r.title,
-		url: r.url,
-		snippet: r.content,
-		score: r.score,
-		publishedDate: r.published_date,
-	}));
-}
-
-async function searchBrave(query: string, opts: { maxResults: number }): Promise<SearchResult[]> {
-	const apiKey = process.env.BRAVE_API_KEY;
-	if (!apiKey) throw new Error("BRAVE_API_KEY not set");
-
-	const params = new URLSearchParams({ q: query, count: String(opts.maxResults) });
-	const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
-		headers: { Accept: "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": apiKey },
-	});
-
-	if (!resp.ok) {
-		const text = await resp.text();
-		throw new Error(`Brave API error ${resp.status}: ${text}`);
-	}
-
-	const data = (await resp.json()) as { web?: { results: Array<{ title: string; url: string; description: string; age?: string }> } };
-	return (data.web?.results ?? []).map((r) => ({
-		title: r.title,
-		url: r.url,
-		snippet: r.description,
-		publishedDate: r.age,
-	}));
-}
-
-async function doSearch(query: string, opts: { maxResults: number; searchDepth: string; includeDomains?: string[]; excludeDomains?: string[]; }): Promise<{ provider: string; results: SearchResult[] }> {
-	// Try Tavily first, then Brave
-	if (process.env.TAVILY_API_KEY) {
-		try {
-			const results = await searchTavily(query, opts);
-			return { provider: "tavily", results };
-		} catch (e) {
-			// Fall through to Brave
-		}
-	}
-	if (process.env.BRAVE_API_KEY) {
-		const results = await searchBrave(query, { maxResults: opts.maxResults });
-		return { provider: "brave", results };
-	}
-	throw new Error(
-		"No search API configured. Set TAVILY_API_KEY or BRAVE_API_KEY environment variable.\n" +
-		"  Tavily: https://tavily.com (free: 1000 req/month)\n" +
-		"  Brave:  https://brave.com/search/api/ (free: 2000 req/month)"
+export default async function (pi: ExtensionAPI) {
+	// Registry = native providers + user plugins; rebuilt on every extension
+	// load so /reload picks up plugin changes (pi awaits async factories).
+	const native = [createTavilyProvider(), createBraveProvider()];
+	const { providers: plugins, warnings } = await loadPlugins(
+		providersDir(),
+		native.map((p) => p.name),
+		createJiti(import.meta.url),
 	);
-}
+	for (const w of warnings) console.warn(w);
 
-// ─── Content Extraction ───
-
-async function extractContent(url: string): Promise<ExtractResult> {
-	const resp = await fetch(url, {
-		headers: {
-			"User-Agent": "Mozilla/5.0 (compatible; PiDeepResearch/1.0)",
-			Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-		},
-		redirect: "follow",
-		signal: AbortSignal.timeout(15000),
-	});
-
-	if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
-
-	const html = await resp.text();
-
-	// Simple content extraction — strip HTML tags, extract title and main content
-	// A production version would use @mozilla/readability or similar
-	const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/is);
-	const title = titleMatch?.[1]?.replace(/&[^;]+;/g, " ").trim() ?? "";
-
-	// Remove script, style, nav, header, footer tags
-	let content = html
-		.replace(/<script[\s\S]*?<\/script>/gi, "")
-		.replace(/<style[\s\S]*?<\/style>/gi, "")
-		.replace(/<nav[\s\S]*?<\/nav>/gi, "")
-		.replace(/<header[\s\S]*?<\/header>/gi, "")
-		.replace(/<footer[\s\S]*?<\/footer>/gi, "")
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&nbsp;/g, " ")
-		.replace(/&[^;]+;/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-
-	// Truncate to ~8000 words to avoid overwhelming the context
-	const words = content.split(/\s+/);
-	const wordCount = words.length;
-	if (words.length > 8000) {
-		content = words.slice(0, 8000).join(" ") + "\n\n[... truncated, total " + wordCount + " words]";
-	}
-
-	// Try to extract author from meta tags
-	const authorMatch = html.match(/<meta[^>]*name=["']author["'][^>]*content=["']([^"']+)["']/i);
-	const author = authorMatch?.[1];
-
-	// Try to extract publish date
-	const dateMatch = html.match(/<meta[^>]*(?:property=["']article:published_time["']|name=["']date["'])[^>]*content=["']([^"']+)["']/i);
-	const publishedDate = dateMatch?.[1];
-
-	return { title, url, content, author, publishedDate, wordCount };
-}
-
-// ─── Batch Search (parallel) ───
-
-async function batchSearch(queries: string[], opts: { maxResults: number; searchDepth: string }): Promise<{ provider: string; results: Record<string, SearchResult[]> }> {
-	const settled = await Promise.allSettled(
-		queries.map((q) => doSearch(q, { maxResults: opts.maxResults, searchDepth: opts.searchDepth }))
+	// Fail fast on unknown provider names (startup error). Order resolution:
+	// SEARCH_PROVIDERS env → ~/.pi/agent/pi-deep-research/config.json → default tavily,brave.
+	const chain = resolveChain(
+		[...native, ...plugins],
+		await readProviderOrder(process.env.SEARCH_PROVIDERS, providersConfigPath()),
 	);
 
-	let provider = "unknown";
-	const results: Record<string, SearchResult[]> = {};
-	for (let i = 0; i < queries.length; i++) {
-		const s = settled[i];
-		if (s.status === "fulfilled") {
-			provider = s.value.provider;
-			results[queries[i]] = s.value.results;
-		} else {
-			results[queries[i]] = [];
-		}
-	}
-	return { provider, results };
-}
-
-// ─── Extension Entry Point ───
-
-export default function (pi: ExtensionAPI) {
 	// ── Tool: web_search ──
 	pi.registerTool({
 		name: "web_search",
@@ -196,7 +41,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Search the web for information. Supports single query or batch queries (parallel).",
 			"Returns ranked results with title, URL, snippet, and relevance score.",
-			"Requires TAVILY_API_KEY or BRAVE_API_KEY environment variable.",
+			"Uses the configured search providers (default: Tavily, then Brave).",
 		].join(" "),
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query" })),
@@ -225,16 +70,25 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params) {
 			const maxResults = Math.min(params.max_results ?? 5, 10);
-			const searchDepth = params.search_depth ?? "basic";
+			const searchDepth = params.search_depth === "advanced" ? "advanced" : "basic";
+			const opts: ChainSearchOptions = {
+				maxResults,
+				searchDepth,
+				includeDomains: params.include_domains,
+				excludeDomains: params.exclude_domains,
+			};
 
 			// Batch mode
 			if (params.queries && params.queries.length > 0) {
-				const { provider, results } = await batchSearch(params.queries, { maxResults, searchDepth });
+				const { results, providers: used, failures } = await chainBatchSearch(chain, params.queries, opts);
 				const totalResults = Object.values(results).reduce((s, r) => s + r.length, 0);
-				let text = `Searched ${params.queries.length} queries via ${provider}, found ${totalResults} results:\n\n`;
+				const via = used.length ? used.join(", ") : "no provider";
+				let text = `Searched ${params.queries.length} queries via ${via}, found ${totalResults} results:\n\n`;
 
 				for (const [query, hits] of Object.entries(results)) {
-					text += `### "${query}" (${hits.length} results)\n\n`;
+					const failed = failures[query];
+					text += `### "${query}" (${hits.length} results)${failed ? " — ⚠️ all providers failed" : ""}\n\n`;
+					if (failed) text += `_${failed}_\n\n`;
 					for (let i = 0; i < hits.length; i++) {
 						const h = hits[i];
 						text += `${i + 1}. **${h.title}**\n   ${h.url}\n   ${h.snippet}\n`;
@@ -243,23 +97,18 @@ export default function (pi: ExtensionAPI) {
 						text += "\n\n";
 					}
 				}
-				return { content: [{ type: "text", text }] };
+				return { content: [{ type: "text", text }], details: undefined };
 			}
 
 			// Single mode
 			if (!params.query) {
 				return {
 					content: [{ type: "text", text: "Error: provide either `query` (string) or `queries` (array)." }],
-					isError: true,
+					details: undefined,
 				};
 			}
 
-			const { provider, results } = await doSearch(params.query, {
-				maxResults,
-				searchDepth,
-				includeDomains: params.include_domains,
-				excludeDomains: params.exclude_domains,
-			});
+			const { provider, results } = await chainSearch(chain, params.query, opts);
 
 			let text = `Searched "${params.query}" via ${provider}, found ${results.length} results:\n\n`;
 			for (let i = 0; i < results.length; i++) {
@@ -269,7 +118,7 @@ export default function (pi: ExtensionAPI) {
 				if (r.publishedDate) text += ` | Date: ${r.publishedDate}`;
 				text += "\n\n";
 			}
-			return { content: [{ type: "text", text }] };
+			return { content: [{ type: "text", text }], details: undefined };
 		},
 	});
 
@@ -280,6 +129,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Extract the main text content from a web page URL.",
 			"Strips HTML, scripts, navigation, and returns clean text.",
+			"Uses the first configured provider with extraction capability, otherwise a basic HTTP fetch.",
 			"Use after web_search to read full content of promising results.",
 		].join(" "),
 		parameters: Type.Object({
@@ -288,19 +138,20 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params) {
 			try {
-				const result = await extractContent(params.url);
+				const result = await chainExtract(chain, params.url);
 				let text = `# ${result.title}\n\n`;
 				text += `**URL:** ${result.url}\n`;
+				text += `**Provider:** ${result.provider}\n`;
 				if (result.author) text += `**Author:** ${result.author}\n`;
 				if (result.publishedDate) text += `**Published:** ${result.publishedDate}\n`;
 				text += `**Word count:** ${result.wordCount}\n\n---\n\n`;
 				text += result.content;
-				return { content: [{ type: "text", text }] };
+				return { content: [{ type: "text", text }], details: undefined };
 			} catch (e: unknown) {
 				const msg = e instanceof Error ? e.message : String(e);
 				return {
 					content: [{ type: "text", text: `Failed to extract content from ${params.url}: ${msg}` }],
-					isError: true,
+					details: undefined,
 				};
 			}
 		},
@@ -494,7 +345,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			return { content: [{ type: "text", text }] };
+			return { content: [{ type: "text", text }], details: undefined };
 		},
 	});
 }

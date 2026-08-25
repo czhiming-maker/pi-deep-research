@@ -180,7 +180,9 @@ Sections include:
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | Research workflow, behavioral mindset, multi-hop patterns, checkpoint rules |
-| `extension.ts` | `web_search` + `web_extract` + `research_checkpoint` tools |
+| `extension.ts` | `web_search` + `web_extract` + `research_checkpoint` tools (thin entry) |
+| `src/` | Provider chain engine, plugin loader, native Tavily/Brave providers |
+| `examples/` | Example provider plugins (SearXNG, Firecrawl) + plugin authoring guide |
 | `prompts/research.md` | `/research` slash command template |
 | `references/config.md` | Depth thresholds, credibility tiers, confidence formula |
 | `references/report-template.md` | Report structure, writing anti-patterns, quality requirements |
@@ -189,12 +191,41 @@ Sections include:
 
 ### Search Providers
 
+Built-in (no setup beyond an API key):
+
 | Provider | Env Variable | Free Tier |
 |----------|-------------|-----------|
-| [Tavily](https://tavily.com) (recommended) | `TAVILY_API_KEY` | 1000 req/month |
+| [Tavily](https://tavily.com) (default first) | `TAVILY_API_KEY` | 1000 req/month |
 | [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` | 2000 req/month |
 
-The extension tries Tavily first, falls back to Brave. If neither is set, it shows a helpful error.
+**Provider chain.** The chain is an ordered list of the providers to try —
+set it once in a config file, or per-session with an env var:
+
+```jsonc
+// ~/.pi/agent/pi-deep-research/config.json   (persistent)
+{ "providers": ["firecrawl", "searxng", "tavily"] }
+```
+
+```bash
+export SEARCH_PROVIDERS=firecrawl,tavily   # env var (overrides the file for this session)
+```
+
+Resolution order: `SEARCH_PROVIDERS` env var → `config.json` → default
+`tavily,brave`. Each provider is tried in order until one returns results;
+empty results and errors both fall through to the next provider. Providers
+with no credentials configured are skipped. A malformed `config.json` is a
+startup error (never a silent fallback to cloud defaults).
+
+**Custom providers (hot-pluggable).** Any search engine — including local
+ones like [SearXNG](https://docs.searxng.org) or self-hosted
+[Firecrawl](https://firecrawl.dev) — can be added by dropping a `.ts` plugin
+into `~/.pi/agent/pi-deep-research/providers/`, listing it in
+`SEARCH_PROVIDERS`, and running `/reload`. Ready-made examples and the plugin
+contract: [`examples/`](examples/README.md). Listing only local providers
+gives you a fully air-gapped setup — cloud APIs are never in the chain.
+
+If no provider is configured at all, `web_search` returns an error explaining
+what to set.
 
 ### Depth Defaults
 

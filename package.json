@@ -1,6 +1,6 @@
 {
   "name": "pi-deep-research",
-  "version": "0.1.6",
+  "version": "0.3.0",
   "description": "Deep research skill for pi — structured search, reflection, and analysis.",
   "keywords": [
     "pi-package",
@@ -18,12 +18,18 @@
   "files": [
     "pi-deep-research/SKILL.md",
     "extension.ts",
+    "src/",
+    "examples/",
     "prompts/",
     "references/",
     "CHANGELOG.md",
     "LICENSE",
     "README.md"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "pi": {
     "skills": [
       "./pi-deep-research"
@@ -34,5 +40,14 @@
     "extensions": [
       "./extension.ts"
     ]
+  },
+  "dependencies": {
+    "jiti": "^2.7.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@sinclair/typebox": "^0.34.52",
+    "@types/node": "^26.3.0",
+    "typescript": "^7.0.2"
   }
 }
