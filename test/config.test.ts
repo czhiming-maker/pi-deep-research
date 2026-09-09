@@ -23,8 +23,8 @@ function fake(name: string): SearchProvider {
 }
 
 describe("parseProviderList", () => {
-	it("defaults to tavily,brave when unset", () => {
-		assert.deepEqual(parseProviderList(undefined), ["tavily", "brave"]);
+	it("defaults to tavily,brave,agent-reach when unset", () => {
+		assert.deepEqual(parseProviderList(undefined), ["tavily", "brave", "agent-reach"]);
 	});
 	it("defaults on blank and all-empty-entry input", () => {
 		assert.deepEqual(parseProviderList(""), DEFAULT_PROVIDERS.slice());

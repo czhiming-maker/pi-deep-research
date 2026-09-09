@@ -3,7 +3,7 @@
  *
  * Search and extraction run a provider chain: the SEARCH_PROVIDERS env var,
  * or ~/.pi/agent/pi-deep-research/config.json {"providers": [...]}, or the
- * default tavily,brave. Additional providers are hot-pluggable: drop a .ts
+ * default tavily,brave,agent-reach. Additional providers are hot-pluggable: drop a .ts
  * file exporting a SearchProvider into ~/.pi/agent/pi-deep-research/providers/
  * and /reload. See README → Custom Search Providers.
  */
@@ -14,12 +14,12 @@ import { Type } from "@sinclair/typebox";
 import { chainBatchSearch, chainExtract, chainSearch, type ChainSearchOptions } from "./src/chain.ts";
 import { providersConfigPath, readProviderOrder, resolveChain } from "./src/config.ts";
 import { loadPlugins, providersDir } from "./src/loader.ts";
-import { createBraveProvider, createTavilyProvider } from "./src/native/index.ts";
+import { createAgentReachProvider, createBraveProvider, createTavilyProvider } from "./src/native/index.ts";
 
 export default async function (pi: ExtensionAPI) {
 	// Registry = native providers + user plugins; rebuilt on every extension
 	// load so /reload picks up plugin changes (pi awaits async factories).
-	const native = [createTavilyProvider(), createBraveProvider()];
+	const native = [createTavilyProvider(), createBraveProvider(), createAgentReachProvider()];
 	const { providers: plugins, warnings } = await loadPlugins(
 		providersDir(),
 		native.map((p) => p.name),
@@ -28,7 +28,7 @@ export default async function (pi: ExtensionAPI) {
 	for (const w of warnings) console.warn(w);
 
 	// Fail fast on unknown provider names (startup error). Order resolution:
-	// SEARCH_PROVIDERS env → ~/.pi/agent/pi-deep-research/config.json → default tavily,brave.
+	// SEARCH_PROVIDERS env → ~/.pi/agent/pi-deep-research/config.json → default tavily,brave,agent-reach.
 	const chain = resolveChain(
 		[...native, ...plugins],
 		await readProviderOrder(process.env.SEARCH_PROVIDERS, providersConfigPath()),

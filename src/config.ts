@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SearchProvider } from "./types.ts";
 
-export const DEFAULT_PROVIDERS = ["tavily", "brave"];
+export const DEFAULT_PROVIDERS = ["tavily", "brave", "agent-reach"];
 
 /** Persistent config file (same directory as the plugin dir). */
 export function providersConfigPath(home: string = homedir()): string {
@@ -41,7 +41,7 @@ export function parseProvidersFile(content: string): string[] | undefined {
 	} catch (e) {
 		throw new Error(
 			`Invalid ~/.pi/agent/pi-deep-research/config.json: ${e instanceof Error ? e.message : String(e)}. ` +
-				`Fix the JSON or delete the file to use the default providers (tavily,brave).`,
+				`Fix the JSON or delete the file to use the default providers (tavily,brave,agent-reach).`,
 		);
 	}
 	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -57,7 +57,7 @@ export function parseProvidersFile(content: string): string[] | undefined {
 
 /**
  * Resolve the provider order: SEARCH_PROVIDERS env var (explicit, session-
- * scoped) → config.json "providers" (persistent) → default tavily,brave.
+ * scoped) → config.json "providers" (persistent) → default tavily,brave,agent-reach.
  * File read errors other than "file does not exist" propagate.
  */
 export async function readProviderOrder(envRaw: string | undefined, configPath: string): Promise<string[]> {

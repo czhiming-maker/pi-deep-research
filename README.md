@@ -22,6 +22,10 @@ export TAVILY_API_KEY="tvly-..."
 export BRAVE_API_KEY="BSA..."
 ```
 
+No API key needed if the [agent-reach](https://github.com/Panniantong/Agent-Reach) toolchain
+(`mcporter` / `opencli`) is installed — the built-in `agent-reach` provider serves search
+through it (Exa web search + Xiaohongshu/Twitter/Reddit social channels) without any keys.
+
 ## Usage
 
 ### Slash Command
@@ -181,7 +185,7 @@ Sections include:
 |------|---------|
 | `SKILL.md` | Research workflow, behavioral mindset, multi-hop patterns, checkpoint rules |
 | `extension.ts` | `web_search` + `web_extract` + `research_checkpoint` tools (thin entry) |
-| `src/` | Provider chain engine, plugin loader, native Tavily/Brave providers |
+| `src/` | Provider chain engine, plugin loader, native Tavily/Brave/agent-reach providers |
 | `examples/` | Example provider plugins (SearXNG, Firecrawl) + plugin authoring guide |
 | `prompts/research.md` | `/research` slash command template |
 | `references/config.md` | Depth thresholds, credibility tiers, confidence formula |
@@ -198,6 +202,21 @@ Built-in (no setup beyond an API key):
 | [Tavily](https://tavily.com) (default first) | `TAVILY_API_KEY` | 1000 req/month |
 | [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` | 2000 req/month |
 
+Built-in (no API key — needs the [agent-reach](https://github.com/Panniantong/Agent-Reach) toolchain):
+
+| Provider | Requirement | Channels |
+|----------|-------------|----------|
+| `agent-reach` | `mcporter` + `opencli` on PATH | Exa web search (any language), Xiaohongshu (CJK queries), Twitter/X + Reddit (non-CJK queries) |
+
+The `agent-reach` provider fans one query out to several channels and merges the
+results — social channels are complementary evidence sources, not fallbacks. It
+sits last in the default chain; machines without the toolchain simply see it
+skipped as "not configured". Tunables: `AGENT_REACH_MAX_CALLS` (per-channel call
+budget, default 8), `AGENT_REACH_TIMEOUT_MS` (channel timeout, default 12000),
+`AGENT_REACH_OPENCLI_CONCURRENCY` (default 1). Login-backed channels are
+protected by a breaker: two consecutive failures cool that channel down for
+five minutes.
+
 **Provider chain.** The chain is an ordered list of the providers to try —
 set it once in a config file, or per-session with an env var:
 
@@ -211,7 +230,7 @@ export SEARCH_PROVIDERS=firecrawl,tavily   # env var (overrides the file for thi
 ```
 
 Resolution order: `SEARCH_PROVIDERS` env var → `config.json` → default
-`tavily,brave`. Each provider is tried in order until one returns results;
+`tavily,brave,agent-reach`. Each provider is tried in order until one returns results;
 empty results and errors both fall through to the next provider. Providers
 with no credentials configured are skipped. A malformed `config.json` is a
 startup error (never a silent fallback to cloud defaults).

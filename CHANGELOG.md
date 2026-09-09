@@ -4,6 +4,11 @@ description: "Changelog for pi-deep-research skill"
 
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Built-in support for [agent-reach](https://github.com/Panniantong/Agent-Reach) (78k+ stars on GitHub) — the popular open-source toolchain that gives agents eyes on the entire internet. Deep research now reaches far beyond plain web search: Exa web search plus Xiaohongshu / Twitter / Reddit community channels, fanned out per query and merged automatically. Zero API keys. Sits last in the default chain (`tavily,brave,agent-reach`); machines without the toolchain see it skipped cleanly. Login-backed channels ship with throttling guardrails (per-channel budget, failure breaker, result cache).
+
 ## [0.3.1] - 2026-08-25
 
 ### Added
