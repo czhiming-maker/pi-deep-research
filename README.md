@@ -6,6 +6,8 @@
 
 Instead of shallow search-and-summarize, it enforces structured methodology: plan → search → reflect → iterate → report. A code-enforced checkpoint gate prevents the agent from rushing to conclusions before gathering enough evidence.
 
+**Search is pluggable.** Built-in providers: [`agent-reach`](https://github.com/Panniantong/Agent-Reach) (Xiaohongshu / Twitter / Reddit / Exa community + web channels via the agent-reach toolchain, zero API keys), [Tavily](https://tavily.com) and [Brave](https://brave.com/search/api/). They compose into a configurable provider chain with automatic failover, and any custom engine — local ones included — drops in as a single `.ts` file. See [Usage → Search Providers](#search-providers).
+
 ## Install
 
 ```bash
@@ -57,6 +59,35 @@ The skill also activates when you ask the agent to research, investigate, or sur
 Investigate the current state of AI agent frameworks
 Investigate the current state of WebAssembly adoption
 ```
+
+### Search Providers
+
+Search runs on a pluggable provider chain. Built-in providers:
+
+| Provider | Setup | Channels |
+|----------|-------|----------|
+| `agent-reach` | [agent-reach](https://github.com/Panniantong/Agent-Reach) toolchain (`mcporter` + `opencli` on PATH) — zero API keys | Exa web search (any language), Xiaohongshu (CJK queries), Twitter/X + Reddit (non-CJK queries) |
+| `tavily` | `TAVILY_API_KEY` (free: 1000 req/month) | Web search |
+| `brave` | `BRAVE_API_KEY` (free: 2000 req/month) | Web search |
+
+Configure the chain once in a config file, or per-session with an env var:
+
+```jsonc
+// ~/.pi/agent/pi-deep-research/config.json   (persistent)
+{ "providers": ["agent-reach", "tavily"] }
+```
+
+```bash
+export SEARCH_PROVIDERS=agent-reach,tavily   # env var (overrides the file for this session)
+```
+
+Resolution order: `SEARCH_PROVIDERS` env var → `config.json` → default
+`tavily,brave,agent-reach`. Each provider is tried in order until one returns
+results; empty results and errors both fall through to the next provider;
+providers with no credentials are skipped. A malformed `config.json` is a
+startup error (never a silent fallback to cloud defaults). Custom engines —
+including local ones like SearXNG or self-hosted Firecrawl — drop in as
+single `.ts` files (details in [Configuration](#search-provider-details)).
 
 ## Quick Start
 
@@ -193,20 +224,7 @@ Sections include:
 
 ## Configuration
 
-### Search Providers
-
-Built-in (no setup beyond an API key):
-
-| Provider | Env Variable | Free Tier |
-|----------|-------------|-----------|
-| [Tavily](https://tavily.com) (default first) | `TAVILY_API_KEY` | 1000 req/month |
-| [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` | 2000 req/month |
-
-Built-in (no API key — needs the [agent-reach](https://github.com/Panniantong/Agent-Reach) toolchain):
-
-| Provider | Requirement | Channels |
-|----------|-------------|----------|
-| `agent-reach` | `mcporter` + `opencli` on PATH | Exa web search (any language), Xiaohongshu (CJK queries), Twitter/X + Reddit (non-CJK queries) |
+### Search Provider Details
 
 The `agent-reach` provider fans one query out to several channels and merges the
 results — social channels are complementary evidence sources, not fallbacks. It
@@ -217,24 +235,6 @@ budget, default 8), `AGENT_REACH_TIMEOUT_MS` (channel timeout, default 12000),
 protected by a breaker: two consecutive failures cool that channel down for
 five minutes.
 
-**Provider chain.** The chain is an ordered list of the providers to try —
-set it once in a config file, or per-session with an env var:
-
-```jsonc
-// ~/.pi/agent/pi-deep-research/config.json   (persistent)
-{ "providers": ["firecrawl", "searxng", "tavily"] }
-```
-
-```bash
-export SEARCH_PROVIDERS=firecrawl,tavily   # env var (overrides the file for this session)
-```
-
-Resolution order: `SEARCH_PROVIDERS` env var → `config.json` → default
-`tavily,brave,agent-reach`. Each provider is tried in order until one returns results;
-empty results and errors both fall through to the next provider. Providers
-with no credentials configured are skipped. A malformed `config.json` is a
-startup error (never a silent fallback to cloud defaults).
-
 **Custom providers (hot-pluggable).** Any search engine — including local
 ones like [SearXNG](https://docs.searxng.org) or self-hosted
 [Firecrawl](https://firecrawl.dev) — can be added by dropping a `.ts` plugin
@@ -242,9 +242,6 @@ into `~/.pi/agent/pi-deep-research/providers/`, listing it in
 `SEARCH_PROVIDERS`, and running `/reload`. Ready-made examples and the plugin
 contract: [`examples/`](examples/README.md). Listing only local providers
 gives you a fully air-gapped setup — cloud APIs are never in the chain.
-
-If no provider is configured at all, `web_search` returns an error explaining
-what to set.
 
 ### Depth Defaults
 
