@@ -4,7 +4,7 @@ description: "Changelog for pi-deep-research skill"
 
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-09-09
 
 ### Added
 - Built-in support for [agent-reach](https://github.com/Panniantong/Agent-Reach) — the popular open-source toolchain that gives agents eyes on the entire internet. Deep research now reaches far beyond plain web search: Exa web search plus Xiaohongshu / Twitter / Reddit community channels, fanned out per query and merged automatically.
