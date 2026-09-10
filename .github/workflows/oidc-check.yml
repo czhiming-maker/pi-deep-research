@@ -1,0 +1,22 @@
+name: oidc-check
+
+# Debug helper: prints the OIDC identity this repo's workflows present to npm.
+# Run it after registering the trusted publisher on npmjs.com and compare the
+# `repository` / `workflow` claims against the registration fields — they must
+# match exactly. Manual trigger only; never publishes anything.
+on:
+  workflow_dispatch:
+
+jobs:
+  claims:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Request and decode the OIDC token (audience npm)
+        run: |
+          curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm" \
+            | jq -r .value | cut -d. -f2 \
+            | { read p; pad=$(( (4 - ${#p} % 4) % 4 )); printf '%s%*s' "$p" "$pad" | tr '_-' '/+'; } \
+            | base64 -d | jq .
