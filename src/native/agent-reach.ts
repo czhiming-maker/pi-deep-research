@@ -169,7 +169,11 @@ export function createAgentReachProvider(exec: ExecFn = pExecFile as ExecFn, exi
 		name: "xhs",
 		usesOpencli: true,
 		async run(query, limit, signal) {
-			const stdout = await run("opencli", ["xiaohongshu", "search", query, "-f", "json"], CHANNEL_TIMEOUT_MS, signal);
+			// opencli ≥1.8.6 rejects the xiaohongshu navigation without a trace context
+			// ("Navigation rejected", deterministic 8/8); retain-on-failure leaves no
+			// artifact on success, ~8.5s per search either way.
+			const args = ["xiaohongshu", "search", query, "--trace=retain-on-failure", "-f", "json"];
+			const stdout = await run("opencli", args, CHANNEL_TIMEOUT_MS, signal);
 			const items = JSON.parse(stdout) as Array<{
 				title?: string;
 				url?: string;
