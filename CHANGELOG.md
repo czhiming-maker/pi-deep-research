@@ -4,6 +4,8 @@ description: "Changelog for pi-deep-research skill"
 
 # Changelog
 
+## [Unreleased]
+
 ## [0.4.1] - 2026-09-10
 
 ### Fixed
