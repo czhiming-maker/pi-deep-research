@@ -32,9 +32,12 @@ function run(cmd, options = {}) {
 	console.log(`$ ${cmd}`);
 	try {
 		return execSync(cmd, { encoding: "utf-8", stdio: options.silent ? "pipe" : "inherit", ...options });
-	} catch {
-		console.error(`Command failed: ${cmd}`);
-		process.exit(1);
+	} catch (e) {
+		if (!options.ignoreError) {
+			console.error(`Command failed: ${cmd}`);
+			process.exit(1);
+		}
+		return null;
 	}
 }
 
@@ -60,6 +63,19 @@ const status = run("git status --porcelain", { silent: true });
 if (status?.trim()) {
 	console.error("Error: uncommitted changes detected. Commit or stash first.");
 	console.error(status);
+	process.exit(1);
+}
+
+// 1b. The target version must be free on the registry — npm versions are
+// immutable, and catching a clash here beats a 403 after tag/GitHub release
+// are already pushed. (npm view exits 1 with "No match found" when absent.)
+const pkgName = JSON.parse(readFileSync("package.json", "utf-8")).name;
+const taken = run(`npm view ${pkgName}@${nextVersion} version --json`, {
+	silent: true,
+	ignoreError: true,
+});
+if (taken?.includes(nextVersion)) {
+	console.error(`Error: ${pkgName}@${nextVersion} already exists on npm. Versions are immutable — bump again.`);
 	process.exit(1);
 }
 
