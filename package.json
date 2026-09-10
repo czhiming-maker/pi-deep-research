@@ -30,6 +30,9 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "prepublishOnly": "npm test && npm run typecheck",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
