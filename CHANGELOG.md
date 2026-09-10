@@ -4,7 +4,7 @@ description: "Changelog for pi-deep-research skill"
 
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-09-10
 
 ### Fixed
 - Xiaohongshu channel passes `--trace=retain-on-failure` to opencli. opencli ≥1.8.6 (extension 1.0.21+) detaches `chrome.debugger` right before `chrome.tabs.update` unless a network capture is active, and Chrome rejects that navigation on Xiaohongshu — every bare search failed with `Navigation rejected` (deterministic on 1.8.6 and 1.8.7). Keeping the capture alive skips the detach: searches succeed again and stop tripping the 15s navigation-idle timeout elsewhere. The flag leaves no artifact on success.
