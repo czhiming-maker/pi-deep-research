@@ -1,7 +1,10 @@
 name: publish
 
 # npm publish + GitHub release run in CI on tag push, so releases never depend
-# on a local npm login. Triggered by scripts/release.mjs pushing vx.y.z.
+# on a local npm login. Auth is Trusted Publishing (OIDC): register this repo
+# as a trusted publisher on npmjs.com (Settings → Trusted publishing) with
+# user czhiming-maker / repo pi-deep-research / workflow publish.yml.
+# No NPM_TOKEN secret needed; npm >= 11.5.1 auto-detects the OIDC environment.
 on:
   push:
     tags:
@@ -11,18 +14,18 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
+      id-token: write # OIDC token for npm trusted publishing
       contents: write # gh release create
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # release builds: no cache, per npm docs
       # prepublishOnly (test + typecheck) needs the dev toolchain in CI
       - run: npm ci
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create GitHub release from the changelog section
         env:
           GH_TOKEN: ${{ github.token }}
