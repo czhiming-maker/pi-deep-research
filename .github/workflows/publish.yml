@@ -1,0 +1,42 @@
+name: publish
+
+# npm publish + GitHub release run in CI on tag push, so releases never depend
+# on a local npm login. Triggered by scripts/release.mjs pushing vx.y.z.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # prepublishOnly (test + typecheck) needs the dev toolchain in CI
+      - run: npm ci
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Create GitHub release from the changelog section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION
+          node -e '
+            const fs = require("fs");
+            const section = fs.readFileSync("CHANGELOG.md", "utf8")
+              .split(`## [${process.env.VERSION}]`)[1]
+              ?.split("\n## ")[0]
+              .trim();
+            if (!section) throw new Error(`no changelog section for ${process.env.VERSION}`);
+            const notes = section.replace(/^[^\n]*\n/, "").trim();
+            fs.writeFileSync("/tmp/notes.md", notes + "\n");
+          '
+          gh release create "$GITHUB_REF_NAME" --title "$VERSION" --notes-file /tmp/notes.md

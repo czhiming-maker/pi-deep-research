@@ -13,15 +13,11 @@
  *  4. Tests + typecheck (fail fast, before any commit)
  *  5. Commit "chore: release x.y.z", tag vx.y.z
  *  6. Re-add an empty [Unreleased] section for the next cycle, commit
- *  7. Push main + tag
- *  8. npm publish (prepublishOnly re-runs tests)
- *  9. GitHub release via gh, notes extracted from the changelog section
+ *  7. Push main + tag — CI publishes to npm and creates the GitHub release
  */
 
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const TARGET = process.argv[2];
 const BUMPS = new Set(["patch", "minor", "major"]);
@@ -98,23 +94,11 @@ writeFileSync("CHANGELOG.md", after.replace(/^(# Changelog\n\n)/, "$1## [Unrelea
 run("git add CHANGELOG.md");
 run('git commit -m "chore: add [Unreleased] section for next cycle"');
 
-// 7. Push
+// 7. Push — CI (.github/workflows/publish.yml) then runs npm publish and
+//    creates the GitHub release, so no local npm login is needed.
 run("git push origin main");
 run(`git push origin v${nextVersion}`);
 
-// 8. Publish (prepublishOnly re-runs tests + typecheck)
-run("npm publish");
-
-// 9. GitHub release with notes lifted from the versioned changelog section
-const section = readFileSync("CHANGELOG.md", "utf-8")
-	.split(`## [${nextVersion}]`)[1]
-	?.split("\n## ")[0]
-	.trim();
-const notes = section.replace(/^[^\n]*\n/, "").trim();
-// notes carry markdown (backticks, quotes) — pass via file so the shell never sees them
-const notesFile = join(tmpdir(), `pi-deep-research-release-${nextVersion}.md`);
-writeFileSync(notesFile, `${notes}\n`);
-run(`gh release create v${nextVersion} --title "${nextVersion}" --notes-file "${notesFile}"`);
-
-console.log(`\n=== Released ${nextVersion} (npm + tag + GitHub release) ===`);
-console.log("Update the local pi extension with:  pi update npm:pi-deep-research");
+console.log(`\n=== Pushed tag v${nextVersion}; CI will publish to npm and create the GitHub release ===`);
+console.log("Watch it with:  gh run watch --workflow=publish.yml");
+console.log("Then update the local pi extension with:  pi update npm:pi-deep-research");
