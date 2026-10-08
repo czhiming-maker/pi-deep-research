@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { posix, win32 } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { createAgentReachProvider } from "../src/native/index.ts";
 
@@ -57,6 +58,7 @@ beforeEach(() => {
 	delete process.env.AGENT_REACH_OPENCLI_CONCURRENCY;
 	delete process.env.AGENT_REACH_BREAKER_MS;
 	delete process.env.AGENT_REACH_TIMEOUT_MS;
+	delete process.env.AGENT_REACH_BIN_DIR;
 });
 afterEach(() => {
 	delete process.env.AGENT_REACH_MAX_CALLS;
@@ -77,6 +79,78 @@ describe("agent-reach isConfigured", () => {
 	it("true when at least one tool is found", () => {
 		const existsMcporterOnly = (p: string): boolean => p.endsWith("/mcporter");
 		assert.equal(createAgentReachProvider(undefined, existsMcporterOnly).isConfigured(), true);
+	});
+});
+
+// ── binary resolution ─────────────────────────────────────────────────────
+
+/** PATH is process-wide; keep the mutation scoped to the test. */
+async function withPath<T>(value: string, fn: () => T | Promise<T>): Promise<T> {
+	const previous = process.env.PATH;
+	process.env.PATH = value;
+	try {
+		return await fn();
+	} finally {
+		if (previous === undefined) delete process.env.PATH;
+		else process.env.PATH = previous;
+	}
+}
+
+/** win32 shim exec shape: sh.exe is invoked with [shimPath, ...realArgs]. */
+function byShim(bin: string, args: readonly string[]): string {
+	const tool = String(args[0] ?? "");
+	if (tool.endsWith("mcporter")) return MCPORTER_OK;
+	if (tool.endsWith("opencli")) {
+		if (args[1] === "xiaohongshu") return XHS_OK;
+		if (args[1] === "twitter") return TWITTER_OK;
+		if (args[1] === "reddit") return REDDIT_OK;
+	}
+	throw new Error(`unexpected exec ${bin} ${args.join(" ")}`);
+}
+
+describe("agent-reach binary resolution", () => {
+	it("win32: resolves a tool from a later ';'-separated PATH entry", async () => {
+		await withPath("C:\\bin-a;C:\\bin-b", () => {
+			const target = win32.join("C:\\bin-b", "mcporter");
+			assert.equal(createAgentReachProvider(undefined, (p) => p === target, "win32").isConfigured(), true);
+		});
+	});
+
+	it("posix: does not treat ';' as a PATH separator", async () => {
+		await withPath("C:\\bin-a;C:\\bin-b", () => {
+			const target = win32.join("C:\\bin-b", "mcporter");
+			assert.equal(createAgentReachProvider(undefined, (p) => p === target, "linux").isConfigured(), false);
+		});
+	});
+
+	it("win32: prefers the extensionless shim and runs it through sh.exe", async () => {
+		const shims = { mcporter: win32.join("C:\\bin", "mcporter"), opencli: win32.join("C:\\bin", "opencli") };
+		const cmdWrapper = win32.join("C:\\bin", "mcporter.cmd");
+		const sh = win32.join("C:\\Program Files", "Git", "usr", "bin", "sh.exe");
+		const exists = (p: string): boolean => Object.values(shims).includes(p) || p === cmdWrapper || p === sh;
+
+		await withPath("C:\\bin", async () => {
+			const { exec, calls } = makeExec(byShim);
+			await createAgentReachProvider(exec, exists, "win32").search({ query: "rust", maxResults: 5 });
+
+			assert.ok(calls.length > 0, "expected channel exec calls");
+			for (const call of calls) assert.equal(call.bin, sh, "shim must be executed via sh.exe");
+			assert.ok(
+				calls.some((c) => c.args[0] === shims.mcporter),
+				"extensionless mcporter shim must win over mcporter.cmd",
+			);
+		});
+	});
+
+	it("posix: execs the resolved binary directly, without a shell", async () => {
+		const target = posix.join("/opt/bin", "mcporter");
+		await withPath("/opt/bin", async () => {
+			const { exec, calls } = makeExec(byPlatform);
+			await createAgentReachProvider(exec, (p) => p === target, "linux").search({ query: "rust", maxResults: 5 });
+
+			assert.equal(calls.find((c) => c.bin.endsWith("mcporter"))?.bin, target);
+			assert.ok(calls.every((c) => !/sh\.exe$/.test(c.bin)), "posix must never wrap in sh.exe");
+		});
 	});
 });
 

@@ -30,12 +30,16 @@
  * $AGENT_REACH_BIN_DIR, and nvm's bin dirs (pi may run without the user's
  * shell PATH). Both absent → the provider is skipped with a clean attempt
  * record, so machines without agent-reach are unaffected.
+ *
+ * Windows: PATH is ';'-separated and npm installs a POSIX sh shim next to the
+ * `.cmd` wrapper, so resolution uses the target platform's separator and runs
+ * the shim through sh.exe (verbatim argv) rather than cmd.exe.
  */
 
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import type { ExtractResult, SearchProvider, SearchRequest, SearchResult } from "../types.ts";
 
@@ -54,7 +58,14 @@ const CACHE_LIMIT = 100;
 const MAX_WORDS = 8000;
 
 /** Dependency-injection point for offline tests (same convention as the fetch param of tavily/brave). */
-export function createAgentReachProvider(exec: ExecFn = pExecFile as ExecFn, exists: (p: string) => boolean = existsSync): SearchProvider {
+export function createAgentReachProvider(
+	exec: ExecFn = pExecFile as ExecFn,
+	exists: (p: string) => boolean = existsSync,
+	platform: NodeJS.Platform = process.platform,
+): SearchProvider {
+	// Path handling follows the target platform so the Windows branch stays
+	// testable off-Windows (PATH entries are platform-specific strings anyway).
+	const pathApi = platform === "win32" ? win32 : posix;
 	// All mutable guardrail state lives in the factory closure: every provider
 	// instance (and every test) starts from a clean slate.
 	const binCache = new Map<string, string>();
@@ -82,19 +93,69 @@ export function createAgentReachProvider(exec: ExecFn = pExecFile as ExecFn, exi
 
 		const candidates: string[] = [];
 		if (process.env.AGENT_REACH_BIN_DIR) candidates.push(process.env.AGENT_REACH_BIN_DIR);
-		for (const dir of (process.env.PATH ?? "").split(":")) if (dir) candidates.push(dir);
+		// The separator follows the target platform, not the host: Windows PATH is
+		// ';'-separated, and splitting on ':' shredded it into drive-letter
+		// fragments ("C", "\Program Files\...;D", …) so nothing ever matched.
+		for (const dir of (process.env.PATH ?? "").split(pathApi.delimiter)) if (dir) candidates.push(dir);
 		candidates.push(join(homedir(), ".local", "bin"));
 		candidates.push(...nvmBinDirs(homedir()));
 
-		const hit = candidates.find((dir) => exists(join(dir, cmd)));
-		const resolved = hit ? join(hit, cmd) : cmd; // bare name = hope PATH works at spawn time
+		// npm on Windows writes an extensionless POSIX shim (`mcporter`) alongside
+		// the `.cmd` wrapper. Prefer the shim: it is the variant that can be run
+		// with a verbatim argv (see toSpawnSpec).
+		const suffixes = platform === "win32" ? ["", ".cmd", ".exe", ".bat"] : [""];
+		let resolved = cmd; // bare name = hope PATH works at spawn time
+		outer: for (const dir of candidates) {
+			for (const suffix of suffixes) {
+				const candidate = pathApi.join(dir, cmd + suffix);
+				if (exists(candidate)) {
+					resolved = candidate;
+					break outer;
+				}
+			}
+		}
 		binCache.set(cmd, resolved);
 		return resolved;
 	}
 
+	// Git's sh.exe is the only interpreter that can run an extensionless npm shim
+	// while preserving argv exactly. Resolved lazily and memoised per instance.
+	let shPath: string | null | undefined;
+	function resolveSh(): string | null {
+		if (shPath !== undefined) return shPath;
+		if (platform !== "win32") return (shPath = null);
+		const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+		const programFilesX86 = process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
+		shPath =
+			[
+				pathApi.join(programFiles, "Git", "usr", "bin", "sh.exe"),
+				pathApi.join(programFiles, "Git", "bin", "sh.exe"),
+				pathApi.join(programFilesX86, "Git", "usr", "bin", "sh.exe"),
+			].find((p) => exists(p)) ?? null;
+		return shPath;
+	}
+
+	/**
+	 * Map a resolved binary to a spawnable { file, argv }.
+	 *
+	 * On Windows an extensionless npm shim is a POSIX sh script, which
+	 * child_process cannot spawn directly (ENOENT). Routing it through sh.exe
+	 * keeps argv verbatim; `shell: true` would instead hand the command line to
+	 * cmd.exe, which re-splits arguments and corrupts values such as
+	 * `exa.web_search_exa(query: "two words", numResults: 3)`.
+	 */
+	function toSpawnSpec(resolved: string, args: readonly string[]): { file: string; argv: string[] } {
+		if (platform === "win32" && !/\.(exe|com|cmd|bat|ps1)$/i.test(resolved) && exists(resolved)) {
+			const sh = resolveSh();
+			if (sh) return { file: sh, argv: [resolved, ...args] };
+		}
+		return { file: resolved, argv: [...args] };
+	}
+
 	async function run(bin: string, args: readonly string[], timeout: number, signal?: AbortSignal): Promise<string> {
 		try {
-			const { stdout } = await exec(resolveBin(bin), args, { timeout, maxBuffer: MAX_BUFFER, signal });
+			const spec = toSpawnSpec(resolveBin(bin), args);
+			const { stdout } = await exec(spec.file, spec.argv, { timeout, maxBuffer: MAX_BUFFER, signal });
 			return stdout;
 		} catch (e) {
 			// exec errors embed the full stderr (proxy warnings, banners) —
