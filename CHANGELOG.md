@@ -6,6 +6,10 @@ description: "Changelog for pi-deep-research skill"
 
 ## [Unreleased]
 
+### Fixed
+- `agent-reach` provider now works on Windows. PATH was split on `:` instead of the platform separator, so on Windows the candidate list was shredded into drive-letter fragments ("C", "\Program Files\...;D", …) and neither `mcporter` nor `opencli` was ever found — the provider silently reported itself unconfigured and every search fell through it. Binary lookup now uses the target platform's separator and also probes the `.cmd` / `.exe` / `.bat` variants npm writes next to the POSIX shim.
+- On Windows an extensionless npm shim (`mcporter`, `opencli`) is a POSIX sh script that `child_process` cannot spawn, so searches failed with `ENOENT` even once the binary was found. Such shims are now executed through Git's `sh.exe`, which keeps argv byte-exact; `shell: true` would instead hand the command line to `cmd.exe`, which re-splits arguments and corrupts values such as `exa.web_search_exa(query: "two words", numResults: 3)`.
+
 ## [0.4.1] - 2026-09-10
 
 ### Fixed
