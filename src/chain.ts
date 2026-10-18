@@ -81,8 +81,9 @@ export async function chainSearch(
 				timeoutMs,
 			);
 			const results = applyDomainFilter(raw, opts.includeDomains, opts.excludeDomains).slice(0, opts.maxResults);
-			if (results.length > 0) return { provider: provider.name, results, attempts };
-			attempts.push({ provider: provider.name, status: "empty" });
+			// The first configured provider that answers is authoritative: return its
+			// results directly instead of falling through to slower providers.
+			return { provider: provider.name, results, attempts };
 		} catch (e) {
 			attempts.push({ provider: provider.name, status: "error", message: e instanceof Error ? e.message : String(e) });
 		}
