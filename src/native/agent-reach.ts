@@ -69,7 +69,7 @@ export function createAgentReachProvider(exec: ExecFn = pExecFile as ExecFn, exi
 		const versionsRoot = join(home, ".nvm", "versions", "node");
 		let versions: string[];
 		try {
-			versions = readdirSync(versionsRoot).filter((v) => /^\d/.test(v)).sort();
+			versions = readdirSync(versionsRoot).filter((v) => /^v?\d/.test(v)).sort();
 		} catch {
 			return [];
 		}

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { createAgentReachProvider } from "../src/native/index.ts";
 
@@ -77,6 +80,24 @@ describe("agent-reach isConfigured", () => {
 	it("true when at least one tool is found", () => {
 		const existsMcporterOnly = (p: string): boolean => p.endsWith("/mcporter");
 		assert.equal(createAgentReachProvider(undefined, existsMcporterOnly).isConfigured(), true);
+	});
+	it("finds tools in nvm version bin dirs (vX.Y.Z) when PATH misses them", () => {
+		// Fake HOME so the result doesn't depend on whether the host has ~/.nvm.
+		const home = mkdtempSync(join(tmpdir(), "agent-reach-home-"));
+		mkdirSync(join(home, ".nvm", "versions", "node", "v22.1.0", "bin"), { recursive: true });
+		const target = join(home, ".nvm", "versions", "node", "v22.1.0", "bin", "mcporter");
+		const saved = { HOME: process.env.HOME, PATH: process.env.PATH };
+		process.env.HOME = home;
+		process.env.PATH = "";
+		try {
+			assert.equal(createAgentReachProvider(undefined, (p) => p === target).isConfigured(), true);
+		} finally {
+			for (const [k, v] of Object.entries(saved)) {
+				if (v === undefined) delete process.env[k];
+				else process.env[k] = v;
+			}
+			rmSync(home, { recursive: true, force: true });
+		}
 	});
 });
 

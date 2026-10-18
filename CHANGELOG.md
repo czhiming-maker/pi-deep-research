@@ -6,6 +6,9 @@ description: "Changelog for pi-deep-research skill"
 
 ## [Unreleased]
 
+### Fixed
+- `agent-reach` now actually finds `mcporter` / `opencli` in nvm's bin dirs when they aren't on PATH (pi may run without the user's shell PATH). The version-dir filter expected names starting with a digit, but nvm names them `vX.Y.Z`, so every nvm dir was dropped and this fallback never worked.
+
 ## [0.4.1] - 2026-09-10
 
 ### Fixed
