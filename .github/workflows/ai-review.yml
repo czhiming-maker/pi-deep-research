@@ -1,0 +1,45 @@
+name: ai-review
+
+# DeepSeek code review + AI-slop check on every PR, fork PRs included.
+# Needs the DEEPSEEK_API_KEY secret; the optional DEEPSEEK_MODEL repo variable
+# overrides the model (default deepseek-v4-pro).
+#
+# pull_request_target is what gives fork PRs access to DEEPSEEK_API_KEY, so
+# this job must never execute PR code: it checks out the BASE branch (the
+# pull_request_target default) and runs the base copy of scripts/ai-review.mjs,
+# which reads the PR only through the GitHub API. Do not add a checkout of the
+# PR head, `npm test`, or anything else that runs PR content to this file.
+#
+# Changes to this workflow or to scripts/ai-review.mjs only take effect once
+# they are merged to main.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      # No npm install: the script has no dependencies (fetch + gh CLI).
+      - run: node scripts/ai-review.mjs
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}

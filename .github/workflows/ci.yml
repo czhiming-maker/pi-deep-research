@@ -1,0 +1,31 @@
+name: ci
+
+# Typecheck + unit tests with a coverage floor, on every PR and on main.
+# Runs PR code, so it uses pull_request (no secrets, read-only token) — safe
+# for fork PRs. The coverage floor lives in the test:coverage npm script.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:coverage
