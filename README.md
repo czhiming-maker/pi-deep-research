@@ -266,6 +266,13 @@ Key design principles:
 3. **Human-in-the-Loop** at plan stage — API calls are costly, confirm before executing
 4. **Code-enforced checkpoints** — LLMs self-evaluate optimistically, code doesn't
 
+## Contributing
+
+Every pull request runs two checks, and both must pass before merging:
+
+- **`test`**: `npm run typecheck` plus `npm run test:coverage`, which runs the unit tests and fails if coverage drops below 98% of lines, 85% of branches, or 97% of functions. Run both locally before pushing.
+- **`review`**: an automated AI code review and AI-slop check, posted as a PR comment and updated on each push. It fails on critical or high-severity findings, or when the PR looks like unreviewed AI-generated output. It can be wrong; reply on the PR if you disagree, and a maintainer can override it.
+
 ## License
 
 MIT
